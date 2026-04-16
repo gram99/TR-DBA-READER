@@ -3,3 +3,4 @@ pandas
 transformers
 torch
 xlsxwriter
+plotly
