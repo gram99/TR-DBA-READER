@@ -11,7 +11,7 @@ st.set_page_config(page_title="NSPIRE Appeal Analyzer", layout="wide")
 st.title("🛡️ NSPIRE Appeal Reason Classifier")
 st.markdown("""
 Upload your inspection export to automatically classify **'Non-Existent Deficiencies'**.
-The system identifies patterns in approved appeals and flags results for human verification.
+This dashboard identifies which standards and areas are prone to inspector error.
 """)
 
 # --- 1. Load AI Model (Cached) ---
@@ -41,7 +41,7 @@ if uploaded_file:
         st.info(f"Found {len(non_existent)} successful appeals to analyze.")
 
         if st.button("🚀 Run AI Analysis"):
-            with st.spinner("Analyzing text and generating visualizations..."):
+            with st.spinner("Generating High-Level Analytics..."):
                 # Prepare text context
                 non_existent['text_for_ai'] = (
                     non_existent['Appeal_Comments'].fillna('') + " " + 
@@ -59,45 +59,66 @@ if uploaded_file:
                 # Run classification
                 results = classifier(non_existent['text_for_ai'].tolist(), candidate_labels=labels)
 
-                # Extract top results (Ensuring they are strings/floats for Plotly)
-                non_existent['AI_Reason'] = [res['labels'][0] for res in results]
-                non_existent['Confidence'] = [round(res['scores'][0], 2) for res in results]
+                # Extract top results
+                non_existent['AI_Reason'] = [res['labels'] for res in results]
+                non_existent['Confidence'] = [round(res['scores'], 2) for res in results]
                 
                 # Flag low confidence (< 0.60)
                 non_existent['Human_Review_Needed'] = non_existent['Confidence'].apply(
                     lambda x: "🚩 YES" if x < 0.60 else "No"
                 )
 
-                # --- Visualizations ---
+                # --- High Level Metrics ---
                 st.success("Analysis Complete!")
-                
-                m1, m2 = st.columns(2)
+                m1, m2, m3 = st.columns(3)
                 with m1:
-                    st.metric("Total Analyzed", len(non_existent))
+                    st.metric("Total Records", len(non_existent))
                 with m2:
                     flags = (non_existent['Human_Review_Needed'] == "🚩 YES").sum()
                     st.metric("Flagged for Review", flags)
+                with m3:
+                    top_std = non_existent['NSPIRE_Standards'].mode()[0]
+                    st.metric("Top Problem Standard", top_std)
 
-                # 4. Distribution Chart
-                st.subheader("Distribution of Appeal Reasons")
-                fig = px.pie(
-                    non_existent, 
-                    names='AI_Reason', 
-                    title='Why Deficiencies are being Approved as Non-Existent',
-                    color_discrete_sequence=px.colors.qualitative.Pastel
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                # --- 4. Side-by-Side Charts ---
+                st.divider()
+                c1, c2 = st.columns(2)
 
-                # 5. Table & Export
+                with c1:
+                    st.subheader("Distribution of Reasons")
+                    fig_pie = px.pie(
+                        non_existent, 
+                        names='AI_Reason', 
+                        hole=0.4,
+                        color_discrete_sequence=px.colors.qualitative.Pastel
+                    )
+                    st.plotly_chart(fig_pie, use_container_width=True)
+
+                with c2:
+                    st.subheader("Top 5 Problem Standards")
+                    top_5_data = non_existent['NSPIRE_Standards'].value_counts().nlargest(5).reset_index()
+                    top_5_data.columns = ['Standard', 'Count']
+                    fig_bar = px.bar(
+                        top_5_data, 
+                        x='Count', 
+                        y='Standard', 
+                        orientation='h',
+                        color='Count',
+                        color_continuous_scale='Blues'
+                    )
+                    fig_bar.update_layout(yaxis={'categoryorder':'total ascending'})
+                    st.plotly_chart(fig_bar, use_container_width=True)
+
+                # --- 5. Table & Export ---
                 st.subheader("Detailed Preview")
-                st.dataframe(non_existent[['Deficiency_ID', 'AI_Reason', 'Confidence', 'Human_Review_Needed']])
+                st.dataframe(non_existent[['Deficiency_ID', 'NSPIRE_Standards', 'AI_Reason', 'Confidence', 'Human_Review_Needed']], use_container_width=True)
 
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                     non_existent.to_excel(writer, index=False, sheet_name='Detailed Analysis')
-                    # Standard pivot
-                    pivot = pd.crosstab(non_existent['NSPIRE_Standards'], non_existent['AI_Reason'])
-                    pivot.to_excel(writer, sheet_name='Summary by Standard')
+                    # Pivot for Standard by Reason
+                    std_pivot = pd.crosstab(non_existent['NSPIRE_Standards'], non_existent['AI_Reason'])
+                    std_pivot.to_excel(writer, sheet_name='Summary by Standard')
 
                 st.download_button(
                     label="💾 Download Final Excel Report",
