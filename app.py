@@ -59,10 +59,10 @@ if uploaded_file:
                 # Run classification
                 results = classifier(non_existent['text_for_ai'].tolist(), candidate_labels=labels)
 
-                # Extract top results
-                non_existent['AI_Reason'] = [res['labels'] for res in results]
-                non_existent['Confidence'] = [round(res['scores'], 2) for res in results]
-                
+                # Extract the top label and the top score specifically
+                non_existent['AI_Reason'] = [res['labels'][0] if isinstance(res['labels'], list) else res['labels'] for res in results]
+                non_existent['Confidence'] = [round(res['scores'][0] if isinstance(res['scores'], list) else res['scores'], 2) for res in results]
+                                                
                 # Flag low confidence (< 0.60)
                 non_existent['Human_Review_Needed'] = non_existent['Confidence'].apply(
                     lambda x: "🚩 YES" if x < 0.60 else "No"
