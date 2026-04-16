@@ -17,6 +17,7 @@ This dashboard identifies which standards and areas are prone to inspector error
 # --- 1. Load AI Model (Cached) ---
 @st.cache_resource
 def load_classifier():
+    # Using BART Large MNLI for high-accuracy zero-shot classification
     return pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
 
 classifier = load_classifier()
@@ -29,9 +30,10 @@ st.sidebar.download_button("📥 Download Template", data=template_data, file_na
 uploaded_file = st.file_uploader("Upload Inspection Export (.txt or .csv)", type=['txt', 'csv'])
 
 if uploaded_file:
+    # Load data with pipe delimiter
     df = pd.read_csv(uploaded_file, sep="|")
     
-    # Filter for Non-Existent
+    # Filter for Non-Existent (Cleaning hidden characters like soft hyphens)
     df['Appeal_Reason'] = df['Appeal_Reason'].astype(str).str.replace(r'[^\x00-\x7F]+', '-', regex=True)
     non_existent = df[df['Appeal_Reason'].str.contains("Non-existent", na=False)].copy()
 
@@ -42,13 +44,13 @@ if uploaded_file:
 
         if st.button("🚀 Run AI Analysis"):
             with st.spinner("Generating High-Level Analytics..."):
-                # Prepare text context
+                # Prepare text context for the AI
                 non_existent['text_for_ai'] = (
                     non_existent['Appeal_Comments'].fillna('') + " " + 
                     non_existent['Mitigation_Details'].fillna('')
                 ).str.replace('"', '')
 
-                # 3. AI Labels
+                # 3. AI Labels (Consolidated for higher confidence)
                 labels = [
                     "Standard Misinterpretation (Incorrectly Cited)", 
                     "Exemption/Code Compliance (Safety Design or Grandfathered)", 
@@ -59,16 +61,17 @@ if uploaded_file:
                 # Run classification
                 results = classifier(non_existent['text_for_ai'].tolist(), candidate_labels=labels)
 
-                # Extract the top label and the top score specifically
-                non_existent['AI_Reason'] = [res['labels'][0] if isinstance(res['labels'], list) else res['labels'] for res in results]
-                non_existent['Confidence'] = [round(res['scores'][0] if isinstance(res['scores'], list) else res['scores'], 2) for res in results]
-                                                
+                # --- FIXED: Extracting Labels and Scores safely ---
+                # result['labels'] and result['scores'] are lists; we grab index 0 for the top result
+                non_existent['AI_Reason'] = [res['labels'][0] for res in results]
+                non_existent['Confidence'] = [round(res['scores'][0], 2) for res in results]
+                
                 # Flag low confidence (< 0.60)
                 non_existent['Human_Review_Needed'] = non_existent['Confidence'].apply(
                     lambda x: "🚩 YES" if x < 0.60 else "No"
                 )
 
-                # --- High Level Metrics ---
+                # --- 4. High Level Metrics ---
                 st.success("Analysis Complete!")
                 m1, m2, m3 = st.columns(3)
                 with m1:
@@ -77,10 +80,10 @@ if uploaded_file:
                     flags = (non_existent['Human_Review_Needed'] == "🚩 YES").sum()
                     st.metric("Flagged for Review", flags)
                 with m3:
-                    top_std = non_existent['NSPIRE_Standards'].mode()[0]
+                    top_std = non_existent['NSPIRE_Standards'].mode()[0] if not non_existent['NSPIRE_Standards'].empty else "N/A"
                     st.metric("Top Problem Standard", top_std)
 
-                # --- 4. Side-by-Side Charts ---
+                # --- 5. Side-by-Side Charts ---
                 st.divider()
                 c1, c2 = st.columns(2)
 
@@ -109,12 +112,16 @@ if uploaded_file:
                     fig_bar.update_layout(yaxis={'categoryorder':'total ascending'})
                     st.plotly_chart(fig_bar, use_container_width=True)
 
-                # --- 5. Table & Export ---
+                # --- 6. Table & Export ---
                 st.subheader("Detailed Preview")
-                st.dataframe(non_existent[['Deficiency_ID', 'NSPIRE_Standards', 'AI_Reason', 'Confidence', 'Human_Review_Needed']], use_container_width=True)
+                st.dataframe(
+                    non_existent[['Deficiency_ID', 'NSPIRE_Standards', 'AI_Reason', 'Confidence', 'Human_Review_Needed']], 
+                    use_container_width=True
+                )
 
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    # Detailed Sheet
                     non_existent.to_excel(writer, index=False, sheet_name='Detailed Analysis')
                     # Pivot for Standard by Reason
                     std_pivot = pd.crosstab(non_existent['NSPIRE_Standards'], non_existent['AI_Reason'])
